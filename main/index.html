@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>小车遥控</title>
+<style>
+body{margin:0;background:#101827;color:#edf3ff;font:18px system-ui;text-align:center;touch-action:manipulation}main{max-width:440px;margin:auto;padding:24px}h1{font-size:28px}p{color:#b3bfd3}input{width:90%;margin:20px 0}.pad{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:25px 0}button{background:#263b5c;color:white;border:0;border-radius:18px;min-height:88px;font-size:22px;touch-action:none;user-select:none;-webkit-user-select:none}button:active{background:#487dce}.stop{background:#b43a49}.wide{width:100%;min-height:60px}small{color:#aab9d2}#status{min-height:28px}
+</style>
+<main><h1>小车遥控</h1><p>前后控制行走，左右控制转向，可同时按住</p><label>速度：<b id="value">40</b>%<br><input id="speed" type="range" min="0" max="100" value="40"></label>
+<div class="pad"><span></span><button data-dir="f">前进 ↑</button><span></span><button data-dir="l">左转 ↶</button><button id="stop" class="stop">停止 ■</button><button data-dir="r">右转 ↷</button><span></span><button data-dir="b">后退 ↓</button><span></span></div>
+<button id="brake" class="wide stop">刹车</button><p id="status">正在连接…</p><small>失去控制信号后约 0.8 秒自动停止。<br>转向每次满功率点动150毫秒，松开后可再次触发。<br>松开左右键由机械弹簧回正。<br>首次测试请将车轮架空。</small></main>
+<script>
+const statusEl=document.querySelector('#status'),speed=document.querySelector('#speed');
+let direction='s',pending=false;
+const held=new Map();
+function update(){
+ const dirs=[...held.values()];
+ const f=dirs.includes('f'),b=dirs.includes('b'),l=dirs.includes('l'),r=dirs.includes('r');
+ const t=f===b?'s':f?'f':'b',s=l===r?'s':l?'l':'r';
+ direction=t==='f'?(s==='l'?'q':s==='r'?'e':'f'):t==='b'?(s==='l'?'z':s==='r'?'c':'b'):s;
+ send();
+}
+async function send(){
+ if(pending)return;pending=true;
+ const d=direction;
+ const controller=new AbortController();
+ const timeout=setTimeout(()=>controller.abort(),500);
+ try{const res=await fetch('/api/drive',{method:'POST',body:d+','+speed.value,cache:'no-store',signal:controller.signal});if(!res.ok)throw Error();statusEl.textContent=d==='s'?'已停止':d==='x'?'刹车中':'控制已连接';}
+ catch(e){held.clear();direction='s';statusEl.textContent='连接中断，请松开按键并重新操作';}
+ finally{clearTimeout(timeout);pending=false;}
+}
+function stop(){held.clear();direction='s';send();}
+document.querySelectorAll('[data-dir]').forEach(btn=>{
+ btn.addEventListener('pointerdown',e=>{e.preventDefault();held.set(e.pointerId,btn.dataset.dir);btn.setPointerCapture(e.pointerId);update();});
+ const release=e=>{if(held.delete(e.pointerId))update();};
+ btn.addEventListener('pointerup',release);
+ btn.addEventListener('pointercancel',release);
+ btn.addEventListener('lostpointercapture',release);
+});
+document.querySelector('#stop').onclick=stop;
+document.querySelector('#brake').onclick=()=>{held.clear();direction='x';send();};
+speed.oninput=()=>{document.querySelector('#value').textContent=speed.value;};
+window.addEventListener('blur',stop);window.addEventListener('pagehide',()=>{direction='s';navigator.sendBeacon('/api/drive','s,0');});
+document.addEventListener('visibilitychange',()=>{if(document.hidden)stop();});
+document.addEventListener('contextmenu',e=>e.preventDefault());
+setInterval(()=>{if(!document.hidden)send();},150);send();
+</script></html>

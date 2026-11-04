@@ -1,0 +1,10 @@
+menu "Car settings"
+
+config CAR_GPIO_TEST
+    bool "Run standalone GPIO test instead of Wi-Fi control"
+    default n
+    help
+        Disconnect the motor driver's four control wires before running.
+        Drive GPIO4, GPIO5, GPIO6, GPIO7 high one at a time for two seconds.
+
+endmenu
