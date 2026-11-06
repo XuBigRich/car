@@ -6,7 +6,7 @@ body{margin:0;background:#101827;color:#edf3ff;font:18px system-ui;text-align:ce
 </style>
 <main><h1>小车遥控</h1><p>前后控制行走，左右控制转向，可同时按住</p><label>速度：<b id="value">40</b>%<br><input id="speed" type="range" min="0" max="100" value="40"></label>
 <div class="pad"><span></span><button data-dir="f">前进 ↑</button><span></span><button data-dir="l">左转 ↶</button><button id="stop" class="stop">停止 ■</button><button data-dir="r">右转 ↷</button><span></span><button data-dir="b">后退 ↓</button><span></span></div>
-<button id="brake" class="wide stop">刹车</button><p id="status">正在连接…</p><small>失去控制信号后约 0.8 秒自动停止。<br>转向每次满功率点动150毫秒，松开后可再次触发。<br>松开左右键由机械弹簧回正。<br>首次测试请将车轮架空。</small></main>
+<button id="brake" class="wide stop">刹车</button><p id="status">正在连接…</p><small>失去控制信号后约 0.8 秒自动停止。<br>按住左右键持续满功率转向，松开立即释放。<br>松开左右键由机械弹簧回正。<br>首次测试请将车轮架空。</small></main>
 <script>
 const statusEl=document.querySelector('#status'),speed=document.querySelector('#speed');
 let direction='s',pending=false;
