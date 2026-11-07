@@ -2,11 +2,11 @@
   "configurations": [
     {
       "name": "ESP-IDF",
-      "compilerPath": "",
-      "compileCommands": "${config:idf.buildPath}/compile_commands.json",
+      "compilerPath": "D:/esp/v5.5.6/tools/tools/xtensa-esp-elf/esp-14.2.0_20260121/xtensa-esp-elf/bin/xtensa-esp32s3-elf-gcc.exe",
+      "compileCommands": "${workspaceFolder}/build-android-clean/compile_commands.json",
       "intelliSenseMode": "gcc-x86",
       "includePath": [
-        "${workspaceFolder}/**"
+        "${workspaceFolder}/main/include"
       ],
       "browse": {
         "path": [
