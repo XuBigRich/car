@@ -1,7 +1,7 @@
 if(CONFIG_CAR_GPIO_TEST)
     set(car_sources "diagnostics/gpio_test.c")
 else()
-    set(car_sources "main.c" "drivers/motor.c" "network/network.c")
+    set(car_sources "main.c" "drivers/motor.c" "drivers/motion.c" "network/network.c")
 endif()
 
 idf_component_register(SRCS ${car_sources}

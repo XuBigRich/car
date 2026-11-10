@@ -1,5 +1,7 @@
 # ESP32-S3 + TC1508A Wi-Fi 小车
 
+新版板载录制、板端执行和技能导出见 [BOARD_MOTION.md](BOARD_MOTION.md)，需配套 App 2.0。
+
 ## 独立 GPIO 排查固件
 
 测试前断开 TC1508A 的四根控制线。此模式不启动 Wi-Fi，也不使用 PWM。

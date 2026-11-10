@@ -1,4 +1,6 @@
 #include "car_config.h"
+#include "motor.h"
+#include <string.h>
 #include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "esp_log.h"
@@ -14,6 +16,10 @@
 static const char *TAG = "car";
 // 电机锁，保护电机控制
 static SemaphoreHandle_t motor_lock;
+// 录制缓冲、回放进度和硬件输出共用同一把锁，避免手动接管与自动切帧交错。
+static motion_t timeline;
+static TaskHandle_t motor_task;
+static esp_timer_handle_t motor_timer;
 // 上一次的转向和转速
 static int last_throttle, last_steering;
 // 是否刹车
@@ -125,20 +131,34 @@ static void drive(int throttle, int steering, bool brake) {
   last_throttle = throttle;
 }
 
+// 仅此适配函数把协议方向映射成电机参数；录制和上传的技能都经过相同硬件保护。
+static void motion_output(void *context, char direction, unsigned speed) {
+  (void)context;
+  int throttle = 0, steering = 0;
+  switch (direction) {
+  case 'f': throttle = speed; break;
+  case 'b': throttle = -(int)speed; break;
+  case 'l': steering = -1; break;
+  case 'r': steering = 1; break;
+  case 'q': throttle = speed; steering = -1; break;
+  case 'e': throttle = speed; steering = 1; break;
+  case 'z': throttle = -(int)speed; steering = -1; break;
+  case 'c': throttle = -(int)speed; steering = 1; break;
+  default: break;
+  }
+  drive(throttle, steering, direction == 'x');
+}
+static uint64_t motion_clock(void *context) { (void)context; return esp_timer_get_time(); }
+// 高精度定时器只唤醒任务，不在定时器回调中等待电机锁或进行换向延时。
+static void motor_wake(void *context) { (void)context; xTaskNotifyGive(motor_task); }
 static void watchdog_task(void *arg) {
   (void)arg;
-  // 轮询
   while (true) {
-    // 获取锁，motor_lock 为 全局变量，在 main 函数中初始化，当前
+    ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(20));
     xSemaphoreTake(motor_lock, portMAX_DELAY);
-    if ((last_throttle || steer_request || braking) &&
-        esp_timer_get_time() - last_command > CAR_TIMEOUT_MS * 1000LL) {
-      drive(0, 0, false);
-      ESP_LOGW(TAG, "Control timeout: stopped");
-    }
+    motion_poll(&timeline);
     steering_update(esp_timer_get_time());
     xSemaphoreGive(motor_lock);
-    vTaskDelay(pdMS_TO_TICKS(10));
   }
 }
 
@@ -205,15 +225,50 @@ void motor_init(void) {
   // 创建一个任务（类似于Java里面的线程，区别是
   // 他死死系统，线程死只死线程不影响应用），watchdog_task
   // 为任务名称，3072为任务堆栈大小，NULL为任务参数，5为任务优先级，NULL为任务句柄
-  configASSERT(xTaskCreate(watchdog_task, "motor_watchdog", 3072, NULL, 5,
-                           NULL) == pdPASS);
+  motion_init(&timeline, motion_clock, motion_output, NULL);
+  configASSERT(xTaskCreate(watchdog_task, "motor_watchdog", 4096, NULL, 5,
+                           &motor_task) == pdPASS);
+  esp_timer_create_args_t timer_args = {.callback = motor_wake, .name = "motion_tick"};
+  ESP_ERROR_CHECK(esp_timer_create(&timer_args, &motor_timer));
+  // 即使 FreeRTOS tick 为10毫秒，也使用板载高精度通知约每2毫秒检查一次动作边界。
+  ESP_ERROR_CHECK(esp_timer_start_periodic(motor_timer, 2000));
 }
 
+// 手动网络接口仍兼容旧方向协议；录制由板子在应用控制状态时进行，不依赖手机发来的时间。
 void motor_command(int throttle, int steering, bool brake) {
+  char direction = brake ? 'x' : throttle > 0 ? (steering < 0 ? 'q' : steering > 0 ? 'e' : 'f') :
+      throttle < 0 ? (steering < 0 ? 'z' : steering > 0 ? 'c' : 'b') : steering < 0 ? 'l' : steering > 0 ? 'r' : 's';
+  unsigned speed = throttle < 0 ? -throttle : throttle;
   xSemaphoreTake(motor_lock, portMAX_DELAY);
-  drive(throttle, steering, brake);
+  motion_manual(&timeline, direction, speed);
   last_command = esp_timer_get_time();
   xSemaphoreGive(motor_lock);
 }
-
-
+// 所有接口持锁调用纯状态机；HTTP 线程只提交操作，执行定时由 motor_task 推进。
+bool motor_motion_begin(uint32_t session, bool skill) {
+  xSemaphoreTake(motor_lock, portMAX_DELAY); bool ok = motion_begin(&timeline, session, skill); xSemaphoreGive(motor_lock); return ok;
+}
+bool motor_motion_end(uint32_t session) {
+  xSemaphoreTake(motor_lock, portMAX_DELAY); bool ok = motion_end(&timeline, session); xSemaphoreGive(motor_lock); return ok;
+}
+bool motor_motion_return(uint32_t session, unsigned f, unsigned b) {
+  xSemaphoreTake(motor_lock, portMAX_DELAY); bool ok = motion_return(&timeline, session, f, b); xSemaphoreGive(motor_lock); return ok;
+}
+bool motor_motion_load(uint32_t session, const motion_frame_t *frames, size_t count) {
+  xSemaphoreTake(motor_lock, portMAX_DELAY); bool ok = motion_load(&timeline, session, frames, count); xSemaphoreGive(motor_lock); return ok;
+}
+bool motor_motion_ack(uint32_t session) {
+  xSemaphoreTake(motor_lock, portMAX_DELAY); bool ok = motion_ack(&timeline, session); xSemaphoreGive(motor_lock); return ok;
+}
+void motor_motion_heartbeat(void) {
+  xSemaphoreTake(motor_lock, portMAX_DELAY); motion_heartbeat(&timeline); xSemaphoreGive(motor_lock);
+}
+void motor_motion_cancel(const char *reason) {
+  xSemaphoreTake(motor_lock, portMAX_DELAY); motion_cancel(&timeline, reason); xSemaphoreGive(motor_lock);
+}
+void motor_motion_snapshot(motion_status_t *status, motion_frame_t *frames) {
+  xSemaphoreTake(motor_lock, portMAX_DELAY);
+  *status = timeline.status;
+  if (frames) memcpy(frames, timeline.frames, status->count * sizeof(*frames));
+  xSemaphoreGive(motor_lock);
+}
